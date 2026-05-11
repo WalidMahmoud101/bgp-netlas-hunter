@@ -186,7 +186,9 @@ async def create_browser(playwright, headless=True):
         args=[
             "--no-sandbox",
             "--disable-blink-features=AutomationControlled",
-        ]
+            # Less Chromium noise on stderr (does not hide all console INFO).
+            "--log-level=3",
+        ],
     )
     context = await browser.new_context(
         viewport={"width": 1920, "height": 1080},
@@ -199,8 +201,27 @@ async def create_browser(playwright, headless=True):
         timezone_id="America/New_York",
         extra_http_headers={
             "Accept-Language": "en-US,en;q=0.9",
-        }
+        },
     )
+
+    # HE pages load GA/GTM via document.write; blocking avoids parser-blocking console spam + extra requests.
+    async def _route_block_analytics(route):
+        u = route.request.url.lower()
+        if any(
+            x in u
+            for x in (
+                "google-analytics.com",
+                "googletagmanager.com",
+                "googleads.g.doubleclick",
+                "pagead2.googlesyndication",
+            )
+        ):
+            await route.abort()
+        else:
+            await route.continue_()
+
+    await context.route("**/*", _route_block_analytics)
+
     # تخطى الـ webdriver detection
     await context.add_init_script("""
         Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
